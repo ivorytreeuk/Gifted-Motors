@@ -29,6 +29,15 @@ const sess = {
   set(v) { try { sessionStorage.setItem('gm_session', JSON.stringify(v)); } catch (e) {} }
 };
 
+function hires() {
+  return store.get('gm_income').map((r, i) => {
+    const payments = r.payments || [{ ts: r.ts, date: r.date, amount: r.paid || 0, by: r.by }];
+    const paid = payments.reduce((a, p) => a + p.amount, 0);
+    return { ...r, id: r.id || 'GM-' + String(i + 1).padStart(4, '0'), payments, paid, balance: r.rate * r.days - paid };
+  });
+}
+function saveHires(list) { store.set('gm_income', list.map(({ paid, balance, ...rest }) => rest)); }
+
 let session = sess.get();
 let view = 'income';
 let managerOK = false;
@@ -86,67 +95,137 @@ function field(id, label, help, control, err) {
 }
 
 function recent(kind) {
-  const rows = store.get(kind).slice(-3).reverse();
+  const rows = (kind === 'gm_income' ? hires() : store.get(kind)).slice(-3).reverse();
   if (!rows.length) return '<div class="empty">Nothing recorded yet on this device.</div>';
   return rows.map((r) => kind === 'gm_income'
     ? `<div class="mini"><div>${esc(r.customer)}<small>${esc(r.vehicle)} · ${esc(r.date)}</small></div><b>${money(r.paid)}</b></div>`
     : `<div class="mini"><div>${esc(r.what)}<small>${esc(r.category)} · ${esc(r.date)}</small></div><b>${money(r.amount)}</b></div>`).join('');
 }
 
+function newHireFields(s, e) {
+  const vehOpts = ['<option value="">Choose a vehicle</option>'].concat(VEHICLES.map((v) => `<option ${s.vehicle === v ? 'selected' : ''}>${esc(v)}</option>`)).join('');
+  return `<div class="row2">
+      ${field('date', 'Date', 'The day the customer paid or took the vehicle.', `<input id="date" type="date" value="${esc(s.date || today())}">`, e.date)}
+      ${field('customer', 'Customer name', 'Who is hiring. Spell it the same way every time.', `<input id="customer" type="text" placeholder="First and last name" value="${esc(s.customer || '')}">`, e.customer)}
+    </div>
+    ${field('vehicle', 'Vehicle', 'Which vehicle they hired.', `<select id="vehicle">${vehOpts}</select>`, e.vehicle)}
+    <div class="row3">
+      ${field('rate', 'Daily rate (K)', 'What it costs to hire this vehicle for one day, in Kwacha.', `<input id="rate" type="number" inputmode="decimal" min="0" value="${esc(s.rate || '')}">`, e.rate)}
+      ${field('days', 'Days hired', 'How many days in total.', `<input id="days" type="number" inputmode="numeric" min="1" value="${esc(s.days || '')}">`, e.days)}
+      ${field('paid', 'Amount paid now (K)', 'The money you are receiving today, even if only part of the total. Type 0 if nothing yet.', `<input id="paid" type="number" inputmode="decimal" min="0" value="${esc(s.paid || '')}">`, e.paid)}
+    </div>
+    <div class="balance"><div class="l">Balance still owed</div><div class="v" id="bal">K 0.00</div><div class="n">Worked out for you: rate × days, minus amount paid. You do not type this.</div></div>`;
+}
+
+function payFields(s, e, open) {
+  if (!open.length) return '<div class="help"><b>There are no unpaid balances right now.</b> When a customer hires with a balance left, it will appear here.</div>';
+  const opts = ['<option value="">Choose the booking</option>'].concat(open.map((h) => `<option value="${esc(h.id)}" ${s.bookingId === h.id ? 'selected' : ''}>${esc(h.id)} · ${esc(h.customer)} · ${esc(h.vehicle)} · owes ${money(h.balance)}</option>`)).join('');
+  const h = open.find((x) => x.id === s.bookingId);
+  const summary = h ? `<div class="summary">
+      <div class="r2"><span>Customer</span><b>${esc(h.customer)}</b></div>
+      <div class="r2"><span>Vehicle</span><b>${esc(h.vehicle)}</b></div>
+      <div class="r2"><span>Hire started</span><b>${esc(h.date)}</b></div>
+      <div class="r2"><span>Total for the hire (${h.days} day${h.days === 1 ? '' : 's'} × ${money(h.rate)})</span><b>${money(h.rate * h.days)}</b></div>
+      <div class="r2"><span>Paid so far</span><b>${money(h.paid)}</b></div>
+      <div class="r2"><span>Still owed</span><b>${money(h.balance)}</b></div>
+    </div>` : '';
+  return `${field('date', 'Date', 'The day the customer paid.', `<input id="date" type="date" value="${esc(s.date || today())}">`, e.date)}
+    ${field('booking', 'Which hire is being paid off?', 'Pick the customer from the list. Only hires with money still owed are shown. Each one has a booking number.', `<select id="booking">${opts}</select>`, e.booking)}
+    ${summary}
+    ${field('amount', 'Amount paying now (K)', 'How much the customer is paying today, in Kwacha. Part-payments are fine.', `<input id="amount" type="number" inputmode="decimal" min="0" value="${esc(s.amount || '')}">`, e.amount)}
+    ${h ? `<div class="balance"><div class="l">Balance after this payment</div><div class="v" id="bal2">${money(h.balance)}</div><div class="n">Worked out for you. The original hire record is updated, not duplicated.</div></div>` : ''}`;
+}
+
 function incomeView(state) {
-  state = state || { date: today(), customer: '', vehicle: '', rate: '', days: '', paid: '' };
+  state = state || {};
+  const mode = state.mode || 'new';
   const e = state.errors || {};
-  const vehOpts = ['<option value="">Choose a vehicle</option>'].concat(VEHICLES.map((v) => `<option ${state.vehicle === v ? 'selected' : ''}>${esc(v)}</option>`)).join('');
+  const open = hires().filter((h) => h.balance > 0.005);
+  const toggle = `<div class="seg" role="group" aria-label="What are you recording?">
+      <button type="button" class="segbtn ${mode === 'new' ? 'on' : ''}" data-mode="new" aria-pressed="${mode === 'new'}">New hire</button>
+      <button type="button" class="segbtn ${mode === 'pay' ? 'on' : ''}" data-mode="pay" aria-pressed="${mode === 'pay'}">Paying a balance</button>
+    </div>`;
+  const hint = mode === 'new'
+    ? 'A new customer is hiring a vehicle. This adds a new line to the income sheet.'
+    : 'A customer is paying off money they still owe on an earlier hire. This updates their existing line, so it is not counted twice.';
   app.innerHTML = header() + `<main class="page">
-    <div><h1>Record money coming in</h1><p class="lead">Use this each time a customer hires a vehicle. One entry per hire.</p></div>
+    <div><h1>Record money coming in</h1><p class="lead">First choose what is happening, then fill in the boxes.</p></div>
     <div class="grid">
-      <form class="card form" id="f" novalidate>
-        <div class="row2">
-          ${field('date', 'Date', 'The day the customer paid or took the vehicle.', `<input id="date" type="date" value="${esc(state.date)}">`, e.date)}
-          ${field('customer', 'Customer name', 'Who is paying. Spell it the same way every time.', `<input id="customer" type="text" placeholder="First and last name" value="${esc(state.customer)}">`, e.customer)}
-        </div>
-        ${field('vehicle', 'Vehicle', 'Which vehicle they hired.', `<select id="vehicle">${vehOpts}</select>`, e.vehicle)}
-        <div class="row3">
-          ${field('rate', 'Daily rate (K)', 'What it costs to hire this vehicle for one day, in Kwacha.', `<input id="rate" type="number" inputmode="decimal" min="0" value="${esc(state.rate)}">`, e.rate)}
-          ${field('days', 'Days hired', 'How many days in total.', `<input id="days" type="number" inputmode="numeric" min="1" value="${esc(state.days)}">`, e.days)}
-          ${field('paid', 'Amount paid (K)', 'The money you are receiving now, even if only part of the total.', `<input id="paid" type="number" inputmode="decimal" min="0" value="${esc(state.paid)}">`, e.paid)}
-        </div>
-        <div class="balance"><div class="l">Balance still owed</div><div class="v" id="bal">K 0.00</div><div class="n">Worked out for you: rate × days, minus amount paid. You do not type this.</div></div>
-        <div class="stamp">This entry will be saved under your name, <b>${esc(session.name)}</b>, with today's date and time.</div>
-        ${state.saved ? '<div class="ok" role="status">Saved. Thank you, your entry is recorded.</div>' : ''}
-        <button class="btn" type="submit">Save</button>
-      </form>
+      <div class="card form">
+        ${toggle}
+        <div class="help" style="margin-top:-8px">${hint}</div>
+        <form class="form" id="f" novalidate>
+          ${mode === 'new' ? newHireFields(state, e) : payFields(state, e, open)}
+          <div class="stamp">This entry will be saved under your name, <b>${esc(session.name)}</b>, with today's date and time.</div>
+          ${state.savedMsg ? `<div class="ok" role="status">${esc(state.savedMsg)}</div>` : ''}
+          ${mode === 'pay' && !open.length ? '' : '<button class="btn" type="submit">Save</button>'}
+        </form>
+      </div>
       <aside class="side">
-        <div class="card"><h2>Quick guide</h2><p>Fill the boxes from top to bottom. Every box needs an answer. Check the balance looks right, then press Save. A green message confirms it worked.</p><p>Made a mistake after saving? Tell the manager. Please do not enter it twice.</p></div>
-        <div class="card" style="margin-top:20px"><h2>Your latest entries</h2>${recent('gm_income')}</div>
+        <div class="card"><h2>Quick guide</h2><p><b>New hire:</b> a customer is starting a hire today.</p><p><b>Paying a balance:</b> a customer who already hired is paying more towards what they owe.</p><p>Made a mistake after saving? Tell the manager. Please do not enter it twice.</p></div>
+        <div class="card" style="margin-top:20px"><h2>Latest hires</h2>${recent('gm_income')}</div>
       </aside>
     </div></main>`;
   wire();
-  const f = document.getElementById('f');
-  const val = (id) => document.getElementById(id).value;
-  const calc = () => {
-    const bal = (parseFloat(val('rate')) || 0) * (parseFloat(val('days')) || 0) - (parseFloat(val('paid')) || 0);
-    document.getElementById('bal').textContent = money(bal);
-  };
-  ['rate', 'days', 'paid'].forEach((id) => document.getElementById(id).addEventListener('input', calc));
-  calc();
-  f.addEventListener('submit', (ev) => {
-    ev.preventDefault();
-    const s = { date: val('date'), customer: val('customer').trim(), vehicle: val('vehicle'), rate: val('rate'), days: val('days'), paid: val('paid') };
-    const errors = {};
-    if (!s.date) errors.date = 'Please pick the date.';
-    if (s.customer.length < 2) errors.customer = 'Please type the customer name.';
-    if (!s.vehicle) errors.vehicle = 'Please choose a vehicle.';
-    if (!(parseFloat(s.rate) > 0)) errors.rate = 'Please type the daily rate, for example 500.';
-    if (!(parseFloat(s.days) >= 1)) errors.days = 'Please type how many days.';
-    if (s.paid === '' || !(parseFloat(s.paid) >= 0)) errors.paid = 'Please type the amount paid. Type 0 if nothing was paid.';
-    if (Object.keys(errors).length) return incomeView({ ...s, errors });
-    const rate = parseFloat(s.rate), days = parseFloat(s.days), paid = parseFloat(s.paid);
-    const rows = store.get('gm_income');
-    rows.push({ ts: new Date().toISOString(), date: s.date, customer: s.customer, vehicle: s.vehicle, rate, days, paid, balance: rate * days - paid, by: session.name });
-    store.set('gm_income', rows);
-    incomeView({ date: today(), customer: '', vehicle: '', rate: '', days: '', paid: '', saved: true });
-  });
+  document.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => incomeView({ mode: b.dataset.mode })));
+  const val = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+
+  if (mode === 'new') {
+    const calc = () => {
+      const bal = (parseFloat(val('rate')) || 0) * (parseFloat(val('days')) || 0) - (parseFloat(val('paid')) || 0);
+      document.getElementById('bal').textContent = money(bal);
+    };
+    ['rate', 'days', 'paid'].forEach((id) => document.getElementById(id).addEventListener('input', calc));
+    calc();
+    document.getElementById('f').addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const s = { mode, date: val('date'), customer: val('customer').trim(), vehicle: val('vehicle'), rate: val('rate'), days: val('days'), paid: val('paid') };
+      const errors = {};
+      if (!s.date) errors.date = 'Please pick the date.';
+      if (s.customer.length < 2) errors.customer = 'Please type the customer name.';
+      if (!s.vehicle) errors.vehicle = 'Please choose a vehicle.';
+      if (!(parseFloat(s.rate) > 0)) errors.rate = 'Please type the daily rate, for example 500.';
+      if (!(parseFloat(s.days) >= 1)) errors.days = 'Please type how many days.';
+      if (s.paid === '' || !(parseFloat(s.paid) >= 0)) errors.paid = 'Please type the amount paid. Type 0 if nothing was paid.';
+      if (Object.keys(errors).length) return incomeView({ ...s, errors });
+      const list = hires();
+      const next = list.reduce((m, h) => Math.max(m, parseInt(String(h.id).replace(/\D/g, ''), 10) || 0), 0) + 1;
+      const id = 'GM-' + String(next).padStart(4, '0');
+      const ts = new Date().toISOString();
+      list.push({ id, ts, date: s.date, customer: s.customer, vehicle: s.vehicle, rate: parseFloat(s.rate), days: parseFloat(s.days), by: session.name, payments: [{ ts, date: s.date, amount: parseFloat(s.paid), by: session.name }] });
+      saveHires(list);
+      const bal = parseFloat(s.rate) * parseFloat(s.days) - parseFloat(s.paid);
+      incomeView({ mode: 'new', savedMsg: `Saved as booking ${id}. ${bal > 0.005 ? 'Balance still owed: ' + money(bal) + '.' : 'Paid in full.'}` });
+    });
+  } else {
+    const bsel = document.getElementById('booking');
+    if (bsel) bsel.addEventListener('change', () => incomeView({ mode: 'pay', bookingId: bsel.value, date: val('date'), amount: val('amount') }));
+    const amt = document.getElementById('amount');
+    const h = open.find((x) => x.id === state.bookingId);
+    if (amt && h) {
+      const calc = () => { document.getElementById('bal2').textContent = money(h.balance - (parseFloat(amt.value) || 0)); };
+      amt.addEventListener('input', calc);
+      calc();
+    }
+    document.getElementById('f').addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const s = { mode, date: val('date'), bookingId: val('booking'), amount: val('amount') };
+      const errors = {};
+      const target = open.find((x) => x.id === s.bookingId);
+      if (!s.date) errors.date = 'Please pick the date.';
+      if (!target) errors.booking = 'Please choose which hire is being paid off.';
+      const a = parseFloat(s.amount);
+      if (!(a > 0)) errors.amount = 'Please type the amount being paid, for example 200.';
+      else if (target && a > target.balance + 0.005) errors.amount = `That is more than the ${money(target.balance)} still owed. Please check the amount.`;
+      if (Object.keys(errors).length) return incomeView({ ...s, errors });
+      const list = hires();
+      const rec = list.find((x) => x.id === s.bookingId);
+      rec.payments.push({ ts: new Date().toISOString(), date: s.date, amount: a, by: session.name });
+      saveHires(list);
+      const left = target.balance - a;
+      incomeView({ mode: 'pay', savedMsg: left > 0.005 ? `Saved. ${target.customer} still owes ${money(left)} on booking ${target.id}.` : `Saved. ${target.customer} has now paid booking ${target.id} in full. Thank you.` });
+    });
+  }
 }
 
 function expenseView(state) {
@@ -223,15 +302,19 @@ function overviewView(errMsg) {
     });
     return;
   }
-  const inc = store.get('gm_income').filter((r) => inPeriod(r.date));
+  const all = hires();
+  const pays = [];
+  all.forEach((h) => h.payments.forEach((p, j) => {
+    if (inPeriod(p.date)) pays.push({ ts: p.ts, type: j === 0 ? 'New hire' : 'Balance payment', details: h.id + ' · ' + h.customer + ' · ' + h.vehicle, amount: p.amount, by: p.by, vehicle: h.vehicle });
+  }));
   const exp = store.get('gm_expense').filter((r) => inPeriod(r.date));
-  const tin = inc.reduce((a, r) => a + r.paid, 0);
+  const tin = pays.reduce((a, r) => a + r.amount, 0);
   const tout = exp.reduce((a, r) => a + r.amount, 0);
-  const owed = inc.reduce((a, r) => a + Math.max(0, r.balance), 0);
+  const owed = all.reduce((a, h) => a + Math.max(0, h.balance), 0);
   const byCat = {}; exp.forEach((r) => { byCat[r.category] = (byCat[r.category] || 0) + r.amount; });
-  const byVeh = {}; inc.forEach((r) => { byVeh[r.vehicle] = (byVeh[r.vehicle] || 0) + r.paid; });
-  const owing = inc.filter((r) => r.balance > 0).sort((a, b) => b.balance - a.balance).slice(0, 6);
-  const latest = [].concat(inc.map((r) => ({ ...r, type: 'Income' })), exp.map((r) => ({ ...r, type: 'Expense' }))).sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 12);
+  const byVeh = {}; pays.forEach((r) => { byVeh[r.vehicle] = (byVeh[r.vehicle] || 0) + r.amount; });
+  const owing = all.filter((h) => h.balance > 0.005).sort((a, b) => b.balance - a.balance).slice(0, 6);
+  const latest = [].concat(pays, exp.map((r) => ({ ts: r.ts, type: 'Expense', details: r.what + ' · ' + r.category, amount: r.amount, by: r.by }))).sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 12);
   const opt = (v, l) => `<option value="${v}" ${period === v ? 'selected' : ''}>${l}</option>`;
   app.innerHTML = header() + `<main class="page">
     <div class="toolbar"><div><h1>Business overview</h1><p class="lead">A summary of the income and expense records. Manager view.</p></div>
@@ -240,15 +323,15 @@ function overviewView(errMsg) {
       <div class="stat"><div class="l">Money in</div><div class="v">${money(tin)}</div></div>
       <div class="stat"><div class="l">Money out</div><div class="v">${money(tout)}</div></div>
       <div class="stat dark"><div class="l">Profit</div><div class="v">${money(tin - tout)}</div></div>
-      <div class="stat warn"><div class="l">Still owed to us</div><div class="v">${money(owed)}</div></div>
+      <div class="stat warn"><div class="l">Still owed to us (right now)</div><div class="v">${money(owed)}</div></div>
     </div>
     <div class="cols">
       <section class="card"><h2>Where the money goes</h2>${bars(byCat, 'y')}</section>
       <section class="card"><h2>Which vehicles earn most</h2>${bars(byVeh, '')}</section>
-      <section class="card"><h2>Who owes us money</h2>${owing.length ? owing.map((r) => `<div class="mini"><div>${esc(r.customer)}<small>${esc(r.vehicle)} · ${esc(r.date)}</small></div><b>${money(r.balance)}</b></div>`).join('') : '<div class="empty">Nobody owes anything in this period.</div>'}</section>
+      <section class="card"><h2>Who owes us money</h2>${owing.length ? owing.map((r) => `<div class="mini"><div>${esc(r.customer)}<small>${esc(r.id)} · ${esc(r.vehicle)} · ${esc(r.date)}</small></div><b>${money(r.balance)}</b></div>`).join('') : '<div class="empty">Nobody owes anything in this period.</div>'}</section>
     </div>
     <section class="card"><h2>Latest entries and who recorded them</h2><div class="help" style="margin-bottom:10px">Every entry carries the staff member's name and a time stamp.</div>
-      ${latest.length ? `<div class="tablewrap"><table><thead><tr><th>Date and time</th><th>Type</th><th>Details</th><th class="r">Amount</th><th>Entered by</th></tr></thead><tbody>${latest.map((r) => `<tr><td>${esc(fmtDT(r.ts))}</td><td><span class="pill ${r.type === 'Expense' ? 'out' : ''}">${r.type}</span></td><td>${r.type === 'Income' ? esc(r.customer) + ' · ' + esc(r.vehicle) : esc(r.what) + ' · ' + esc(r.category)}</td><td class="r"><b>${money(r.type === 'Income' ? r.paid : r.amount)}</b></td><td><b>${esc(r.by)}</b></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Nothing recorded yet. Add an entry on the Money in or Money out page and it will show here.</div>'}
+      ${latest.length ? `<div class="tablewrap"><table><thead><tr><th>Date and time</th><th>Type</th><th>Details</th><th class="r">Amount</th><th>Entered by</th></tr></thead><tbody>${latest.map((r) => `<tr><td>${esc(fmtDT(r.ts))}</td><td><span class="pill ${r.type === 'Expense' ? 'out' : ''}">${esc(r.type)}</span></td><td>${esc(r.details)}</td><td class="r"><b>${money(r.amount)}</b></td><td><b>${esc(r.by)}</b></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Nothing recorded yet. Add an entry on the Money in or Money out page and it will show here.</div>'}
     </section>
     <div><button class="btn small ghost" id="clear">Clear demo entries</button></div>
   </main>`;

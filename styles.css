@@ -96,3 +96,10 @@ td.r,th.r{text-align:right}
 .pill.out{background:#FFF3D1;color:#5C4306}
 .toolbar{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
 .toolbar select{height:48px;padding:0 14px;font-size:16px;border:2px solid var(--field);border-radius:10px;background:#fff;color:var(--navy)}
+
+/* income mode switch and booking summary */
+.seg{display:flex;gap:6px;background:#E8EEF8;border-radius:14px;padding:5px}
+.segbtn{flex:1;height:52px;border:0;border-radius:10px;background:transparent;color:var(--navy);font-size:15px;font-weight:600;cursor:pointer}
+.segbtn.on{background:var(--navy);color:#fff}
+.summary{background:#F6F8FC;border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:grid;gap:6px;font-size:15px}
+.summary .r2{display:flex;justify-content:space-between;gap:12px}
