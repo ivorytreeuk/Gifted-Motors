@@ -78,6 +78,7 @@ function newHireFields(s, e) {
       ${field('date', 'Date paid', 'The day the customer paid you.', `<input id="date" type="date" value="${esc(s.date || today())}">`, e.date)}
       ${field('customer', 'Customer name', 'Who is hiring. Spell it the same way every time.', `<input id="customer" type="text" placeholder="First and last name" value="${esc(s.customer || '')}">`, e.customer)}
     </div>
+    ${field('phone', 'Customer phone number', 'A number we can reach the customer on. Include the area code, for example +260 97 123 4567.', `<input id="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="e.g. +260 97 123 4567" value="${esc(s.phone || '')}">`, e.phone)}
     ${field('vehicle', 'Type of vehicle', 'Which type of vehicle they are hiring. The number plate box appears after you choose.', vehicleSelect(s, 'Choose a vehicle'), e.vehicle)}
     ${regField(s, e)}
     <div class="row3">
@@ -106,6 +107,7 @@ function payFields(s, e, open) {
   const h = open.find((x) => x.id === s.bookingId);
   const summary = h ? `<div class="summary">
       <div class="r2"><span>Customer</span><b>${esc(h.customer)}</b></div>
+      <div class="r2"><span>Customer phone</span><b>${esc(h.phone || 'Not recorded')}</b></div>
       <div class="r2"><span>Vehicle</span><b>${esc(h.vehicle)}${h.reg ? ' · ' + esc(h.reg) : ''}</b></div>
       <div class="r2"><span>${h.prepaid ? 'Prepaid hire starts' : 'Hire started'}</span><b>${esc(fmtD(h.startDate))}</b></div>
       <div class="r2"><span>Total for the hire (${h.days} day${h.days === 1 ? '' : 's'} × ${money(h.rate)})</span><b>${money(h.total)}</b></div>
@@ -162,11 +164,12 @@ function incomeView(state) {
     calc();
     $('f').addEventListener('submit', (ev) => {
       ev.preventDefault();
-      const s = { mode, date: val('date'), customer: val('customer').trim(), vehicle: val('vehicle'), reg: normReg(val('reg')), rate: val('rate'), days: val('days'), paid: val('paid'), prepaid, startDate: prepaid ? val('startDate') : '' };
+      const s = { mode, date: val('date'), customer: val('customer').trim(), phone: val('phone').trim(), vehicle: val('vehicle'), reg: normReg(val('reg')), rate: val('rate'), days: val('days'), paid: val('paid'), prepaid, startDate: prepaid ? val('startDate') : '' };
       const errors = {};
       if (!s.date) errors.date = 'Please pick the date.';
       if (s.customer.length < 2) errors.customer = 'Please type the customer name.';
       if (!s.vehicle) errors.vehicle = 'Please choose a type of vehicle.';
+      if (!phoneOK(s.phone)) errors.phone = 'Please type the customer phone number, using numbers only (a + at the start is fine).';
       if (s.vehicle && !regOK(s.reg)) errors.reg = 'Please type the registration number (number plate), for example ABC 1234.';
       if (!(parseFloat(s.rate) > 0)) errors.rate = 'Please type the daily rate, for example 500.';
       if (!(parseFloat(s.days) >= 1)) errors.days = 'Please type how many days.';
@@ -182,7 +185,7 @@ function incomeView(state) {
       const id = 'GM-' + String(next).padStart(4, '0');
       const ts = new Date().toISOString();
       const rate = parseFloat(s.rate), days = parseFloat(s.days), paid = parseFloat(s.paid);
-      list.push({ id, ts, date: s.date, customer: s.customer, vehicle: s.vehicle, reg: s.reg, rate, days, by: session.name, prepaid, startDate: prepaid ? s.startDate : s.date, payments: [{ ts, date: s.date, amount: paid, by: session.name }] });
+      list.push({ id, ts, date: s.date, customer: s.customer, phone: s.phone, vehicle: s.vehicle, reg: s.reg, rate, days, by: session.name, prepaid, startDate: prepaid ? s.startDate : s.date, payments: [{ ts, date: s.date, amount: paid, by: session.name }] });
       saveHires(list);
       const bal = rate * days - paid;
       incomeView({ mode: 'new', savedMsg: `Saved as booking ${id}${prepaid ? ' (prepaid, hire starts ' + fmtD(s.startDate) + ')' : ''}. ${bal > 0.005 ? 'Balance still owed: ' + money(bal) + '.' : 'Paid in full.'}` });

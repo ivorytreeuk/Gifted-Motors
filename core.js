@@ -39,6 +39,7 @@ const fmtD = (s) => { if (!s) return ''; const d = new Date(s + 'T00:00:00'); re
 const fmtDT = (s) => { try { return new Date(s).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return s; } };
 const daysBetween = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 864e5);
 const normReg = (s) => String(s || '').toUpperCase().replace(/\s+/g, ' ').trim();
+const phoneOK = (s) => /^[+0-9 ()-]+$/.test(s) && (s.match(/\d/g) || []).length >= 7;
 const regOK = (s) => /^[A-Z0-9][A-Z0-9 -]{2,11}$/.test(s);
 const unique = (arr) => Array.from(new Set(arr.filter(Boolean)));
 
@@ -57,7 +58,7 @@ function hires() {
     const payments = r.payments || [{ ts: r.ts, date: r.date, amount: r.paid || 0, by: r.by }];
     const paid = sum(payments, (p) => p.amount);
     const total = r.rate * r.days;
-    return { ...r, id: r.id || 'GM-' + String(i + 1).padStart(4, '0'), reg: r.reg || '', prepaid: !!r.prepaid, startDate: r.startDate || r.date, payments, paid, total, balance: total - paid };
+    return { ...r, id: r.id || 'GM-' + String(i + 1).padStart(4, '0'), reg: r.reg || '', phone: r.phone || '', prepaid: !!r.prepaid, startDate: r.startDate || r.date, payments, paid, total, balance: total - paid };
   });
 }
 function saveHires(list) { store.set('gm_income', list.map(({ paid, balance, total, ...rest }) => rest)); }
@@ -79,7 +80,7 @@ function ledger() {
   const rows = [];
   hires().forEach((h) => h.payments.forEach((p, j) => rows.push({
     ts: p.ts, date: p.date, dir: 'in', type: j === 0 ? (h.prepaid ? 'Prepayment' : 'New hire') : 'Balance payment',
-    ref: h.id, details: h.customer, vehicle: h.vehicle, reg: h.reg, category: 'Hire income', amount: p.amount, by: p.by
+    ref: h.id, details: h.customer, phone: h.phone, vehicle: h.vehicle, reg: h.reg, category: 'Hire income', amount: p.amount, by: p.by
   })));
   expenses().forEach((x) => rows.push({
     ts: x.ts, date: x.date, dir: 'out', type: 'Expense', ref: x.id, details: x.what + ' · ' + x.category,
@@ -202,5 +203,5 @@ function downloadCSV(name, head, rows) {
   document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 800);
 }
-const ledgerCSVHead = ['Date', 'Time entered', 'Type', 'Reference', 'Details', 'Vehicle', 'Registration', 'Category', 'Money in (K)', 'Money out (K)', 'Entered by'];
-const ledgerCSVRow = (x) => [x.date, fmtDT(x.ts), x.type, x.ref, x.details, x.vehicle, x.reg, x.category, x.dir === 'in' ? x.amount.toFixed(2) : '', x.dir === 'out' ? x.amount.toFixed(2) : '', x.by];
+const ledgerCSVHead = ['Date', 'Time entered', 'Type', 'Reference', 'Details', 'Customer phone', 'Vehicle', 'Registration', 'Category', 'Money in (K)', 'Money out (K)', 'Entered by'];
+const ledgerCSVRow = (x) => [x.date, fmtDT(x.ts), x.type, x.ref, x.details, x.phone || '', x.vehicle, x.reg, x.category, x.dir === 'in' ? x.amount.toFixed(2) : '', x.dir === 'out' ? x.amount.toFixed(2) : '', x.by];

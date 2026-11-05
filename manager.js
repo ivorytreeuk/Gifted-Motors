@@ -90,7 +90,7 @@ function ordersView() {
   const update = () => {
     const q = ordF.q.trim().toLowerCase();
     const rows = ledger().filter((x) => inRange(x.date, ordRng) && (!ordF.type || x.type === ordF.type) && (!ordF.by || x.by === ordF.by) && (!ordF.vehicle || x.vehicle === ordF.vehicle)
-      && (!q || [x.ref, x.details, x.vehicle, x.reg, x.category, x.by, x.type].join(' ').toLowerCase().indexOf(q) >= 0));
+      && (!q || [x.ref, x.details, x.phone, x.vehicle, x.reg, x.category, x.by, x.type].join(' ').toLowerCase().indexOf(q) >= 0));
     const tin = sum(rows.filter((x) => x.dir === 'in'), (x) => x.amount), tout = sum(rows.filter((x) => x.dir === 'out'), (x) => x.amount);
     $('res').innerHTML = `<div class="reshead"><div><b>${rows.length}</b> entr${rows.length === 1 ? 'y' : 'ies'} · ${esc(rangeLabel(ordRng))}</div><button class="btn small ghost" id="ocsv" type="button">Download these rows (CSV)</button></div>`
       + (rows.length ? table(['Date', 'Type', 'Ref', 'Details', 'Vehicle', 'Money in|r', 'Money out|r', 'Entered by'],
@@ -205,10 +205,10 @@ function prepaidView() {
   wireHeader();
   const list = () => {
     const q = prF.q.trim().toLowerCase();
-    const rows = all.filter((h) => (prF.status === 'all' || (prF.status === 'awaiting') === (h.startDate >= today())) && (!q || [h.id, h.customer, h.vehicle, h.reg, h.by].join(' ').toLowerCase().indexOf(q) >= 0)).sort((a, b) => a.startDate.localeCompare(b.startDate));
-    $('prlist').innerHTML = rows.length ? table(['Booking', 'Customer', 'Vehicle', 'Prepaid so far|r', 'Hire total|r', 'Balance|r', 'Hire starts', 'Status', 'Entered by'],
-      rows.map((h) => { const s = prepStatus(h); return [esc(h.id), esc(h.customer), vehCell(h.vehicle, h.reg), money(h.paid), money(h.total), money(Math.max(0, h.balance)), esc(fmtD(h.startDate)), pill(s.label, s.key === 'started' ? '' : s.key === 'today' ? 'out' : 'pre'), esc(h.by)]; }),
-      ['', '<b>Total</b>', '', `<b>${money(sum(rows, (h) => h.paid))}</b>`, `<b>${money(sum(rows, (h) => h.total))}</b>`, `<b>${money(sum(rows, (h) => Math.max(0, h.balance)))}</b>`, '', '', '']) : '<div class="empty">No prepaid bookings match. Prepayments are recorded on the Money in page by choosing "Yes, paid in advance".</div>';
+    const rows = all.filter((h) => (prF.status === 'all' || (prF.status === 'awaiting') === (h.startDate >= today())) && (!q || [h.id, h.customer, h.phone, h.vehicle, h.reg, h.by].join(' ').toLowerCase().indexOf(q) >= 0)).sort((a, b) => a.startDate.localeCompare(b.startDate));
+    $('prlist').innerHTML = rows.length ? table(['Booking', 'Customer', 'Phone', 'Vehicle', 'Prepaid so far|r', 'Hire total|r', 'Balance|r', 'Hire starts', 'Status', 'Entered by'],
+      rows.map((h) => { const s = prepStatus(h); return [esc(h.id), esc(h.customer), esc(h.phone || '—'), vehCell(h.vehicle, h.reg), money(h.paid), money(h.total), money(Math.max(0, h.balance)), esc(fmtD(h.startDate)), pill(s.label, s.key === 'started' ? '' : s.key === 'today' ? 'out' : 'pre'), esc(h.by)]; }),
+      ['', '<b>Total</b>', '', '', `<b>${money(sum(rows, (h) => h.paid))}</b>`, `<b>${money(sum(rows, (h) => h.total))}</b>`, `<b>${money(sum(rows, (h) => Math.max(0, h.balance)))}</b>`, '', '', '']) : '<div class="empty">No prepaid bookings match. Prepayments are recorded on the Money in page by choosing "Yes, paid in advance".</div>';
   };
   $('prs').addEventListener('change', () => { prF.status = $('prs').value; list(); });
   $('prq').addEventListener('input', () => { prF.q = $('prq').value; list(); });
@@ -229,9 +229,9 @@ function owingView() {
   wireHeader();
   const list = () => {
     const q = owF.q.trim().toLowerCase();
-    const rows = open.filter((h) => !q || [h.id, h.customer, h.vehicle, h.reg].join(' ').toLowerCase().indexOf(q) >= 0);
-    $('owlist').innerHTML = rows.length ? table(['Booking', 'Customer', 'Vehicle', 'Hire date', 'Age (days)|r', 'Total|r', 'Paid|r', 'Owed|r'], rows.map((h) => [esc(h.id) + (h.prepaid ? ' ' + pill('Prepaid', 'pre') : ''), esc(h.customer), vehCell(h.vehicle, h.reg), esc(fmtD(h.startDate)), h.age, money(h.total), money(h.paid), `<b>${money(h.balance)}</b>`]),
-      ['', '<b>Total</b>', '', '', '', `<b>${money(sum(rows, (h) => h.total))}</b>`, `<b>${money(sum(rows, (h) => h.paid))}</b>`, `<b>${money(sum(rows, (h) => h.balance))}</b>`]) : '<div class="empty">Nobody owes anything that matches.</div>';
+    const rows = open.filter((h) => !q || [h.id, h.customer, h.phone, h.vehicle, h.reg].join(' ').toLowerCase().indexOf(q) >= 0);
+    $('owlist').innerHTML = rows.length ? table(['Booking', 'Customer', 'Phone', 'Vehicle', 'Hire date', 'Age (days)|r', 'Total|r', 'Paid|r', 'Owed|r'], rows.map((h) => [esc(h.id) + (h.prepaid ? ' ' + pill('Prepaid', 'pre') : ''), esc(h.customer), esc(h.phone || '—'), vehCell(h.vehicle, h.reg), esc(fmtD(h.startDate)), h.age, money(h.total), money(h.paid), `<b>${money(h.balance)}</b>`]),
+      ['', '<b>Total</b>', '', '', '', '', `<b>${money(sum(rows, (h) => h.total))}</b>`, `<b>${money(sum(rows, (h) => h.paid))}</b>`, `<b>${money(sum(rows, (h) => h.balance))}</b>`]) : '<div class="empty">Nobody owes anything that matches.</div>';
   };
   $('owq').addEventListener('input', () => { owF.q = $('owq').value; list(); });
   list();
