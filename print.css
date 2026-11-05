@@ -1,0 +1,17 @@
+/* Used when saving the report as a PDF or printing */
+@page{size:A4;margin:12mm}
+*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{background:#fff}
+.noprint,.demo,.top{display:none!important}
+.page{max-width:none;padding:0;gap:14px}
+.report{border:0;border-radius:0}
+.rsec{padding:14px 4px;break-inside:avoid}
+.rhead{padding:16px 18px}
+.tablewrap{overflow:visible}
+table{min-width:0!important;font-size:11px}
+th,td{padding:6px 8px}
+tr{break-inside:avoid}
+.vbwrap{overflow:visible}
+.vbars{min-width:0!important;height:200px}
+.cols2{grid-template-columns:1fr 1fr;gap:18px}
+a{color:inherit;text-decoration:none}
