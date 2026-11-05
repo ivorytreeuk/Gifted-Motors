@@ -20,14 +20,22 @@ function managerGate(msg) {
     <div><h1>Manager area</h1><p class="lead">This part needs the manager password.</p></div>
     ${msg ? `<div class="errbox" role="alert">${esc(msg)}</div>` : ''}
     <form class="form" id="mf" novalidate>
-      <div class="field"><label for="mpw">Manager password</label><input id="mpw" type="password" placeholder="Type the manager password"><div class="help">Demo only: the manager password is <b>manager</b>.</div></div>
+      <div class="field"><label for="mpw">Manager password</label><input id="mpw" type="password" placeholder="Type the manager password">${LIVE ? '' : '<div class="help">Demo only: the manager password is <b>manager</b>.</div>'}</div>
       <button class="btn" type="submit">Open manager area</button>
     </form></div></main>`;
   wireHeader();
-  $('mf').addEventListener('submit', (ev) => {
+  $('mf').addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    if ($('mpw').value === DEMO_PASSWORDS.manager) { session.mgr = true; sess.set(session); render(); }
-    else managerGate('That password is not right.');
+    if (!LIVE) {
+      if ($('mpw').value === DEMO_PASSWORDS.manager) { session.mgr = true; sess.set(session); render(); }
+      else managerGate('That password is not right.');
+      return;
+    }
+    const b = $('mf').querySelector('button'); b.disabled = true; b.textContent = 'Checking…';
+    try {
+      await api('managerLogin', { password: $('mpw').value });
+      session.mgr = true; sess.set(session); DATA.loaded = false; render();
+    } catch (e) { if (!handleApiError(e)) managerGate(e.message); }
   });
 }
 
@@ -63,11 +71,11 @@ function overviewView() {
       <div class="help" style="margin-bottom:10px">Every entry carries the staff member's name and a time stamp.</div>
       ${latest.length ? table(['Entered', 'Type', 'Details', 'Vehicle', 'Amount|r', 'Entered by'], latest.map((x) => [esc(fmtDT(x.ts)), typePill(x.type), esc(x.details), vehCell(x.vehicle, x.reg), `<b>${money(x.amount)}</b>`, `<b>${esc(x.by)}</b>`])) : '<div class="empty">Nothing recorded in this period yet. Add an entry on the Money in or Money out page and it will show here.</div>'}
     </section>
-    <div><button class="btn small ghost" id="clear" type="button">Clear demo entries</button></div>
+    ${LIVE ? '' : '<div><button class="btn small ghost" id="clear" type="button">Clear demo entries</button></div>'}
   </main>`;
   wireHeader();
   wireRange('o', rng, overviewView);
-  $('clear').addEventListener('click', () => { if (confirm('Remove all demo entries from this device?')) { store.set('gm_income', []); store.set('gm_expense', []); overviewView(); } });
+  if ($('clear')) $('clear').addEventListener('click', () => { if (confirm('Remove all demo entries from this device?')) { store.set('gm_income', []); store.set('gm_expense', []); overviewView(); } });
 }
 
 // ---- All orders -----------------------------------------------------------------

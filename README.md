@@ -15,3 +15,8 @@ Files
 - `styles.css`, `print.css` - look on screen and when saved as PDF
 
 Business details printed on the report (name, registration number, address) are at the top of `core.js`.
+
+## Going live with Google Sheets
+1. In the Google Sheet: Extensions > Apps Script. Paste `apps-script/Code.gs`, change the two passwords at the top, run `setup`.
+2. Deploy > New deployment > Web app (Execute as: Me, Who has access: Anyone). Copy the `/exec` address.
+3. Put that address in `API_URL` at the top of `core.js` and push.

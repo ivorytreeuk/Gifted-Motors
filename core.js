@@ -5,6 +5,8 @@
    core.js = settings, helpers, data, charts. */
 
 // ---- Things the client can change easily -------------------------------
+// Paste the Google web app address here to switch from demo mode to the real Google Sheet.
+const API_URL = '';
 const CONFIG = {
   business: 'Gifted Motors',
   legalName: '[Registered business name]',
@@ -13,16 +15,20 @@ const CONFIG = {
   contact: '[Phone number / email]',
   preparedBy: '[Manager name]'
 };
-const VEHICLES = [
+let VEHICLES = [
   'Toyota Land Cruiser Prado',
   'Toyota Hilux',
   'Honda Fit',
   'Toyota Hiace van',
   'Toyota Alphard / Vellfire'
 ];
-const CATEGORIES = ['Fuel', 'Mechanic and repairs', 'Drivers', 'Marketing', 'Salaries', 'Other'];
+let CATEGORIES = ['Fuel', 'Mechanic and repairs', 'Drivers', 'Marketing', 'Salaries', 'Other'];
 const DEMO_PASSWORDS = { staff: 'staff', manager: 'manager' };
 // -------------------------------------------------------------------------
+
+const LIVE = !!API_URL;
+// In live mode the records come from Google Sheets and are held here while the page is open.
+const DATA = { income: [], expense: [], recentHires: [], recentExpenses: [], regs: [], loaded: false, at: null };
 
 const PALETTE = ['#0E2A5B', '#F5B81C', '#3B6FD4', '#9DB8EA', '#B97A00', '#6B7A99', '#1F8A70', '#8A4B2A'];
 
@@ -53,17 +59,20 @@ const sess = {
 };
 
 // ---- Data -----------------------------------------------------------------
-function hires() {
-  return store.get('gm_income').map((r, i) => {
+const rawIncome = () => (LIVE ? DATA.income : store.get('gm_income'));
+const rawExpense = () => (LIVE ? DATA.expense : store.get('gm_expense'));
+function hires() { return rawIncome().map(shapeHire); }
+function shapeHire(r, i) {
+  {
     const payments = r.payments || [{ ts: r.ts, date: r.date, amount: r.paid || 0, by: r.by }];
     const paid = sum(payments, (p) => p.amount);
     const total = r.rate * r.days;
     return { ...r, id: r.id || 'GM-' + String(i + 1).padStart(4, '0'), reg: r.reg || '', phone: r.phone || '', prepaid: !!r.prepaid, startDate: r.startDate || r.date, payments, paid, total, balance: total - paid };
-  });
+  }
 }
 function saveHires(list) { store.set('gm_income', list.map(({ paid, balance, total, ...rest }) => rest)); }
 function expenses() {
-  return store.get('gm_expense').map((r, i) => ({ ...r, id: 'EX-' + String(i + 1).padStart(4, '0'), vehicle: r.vehicle || '', reg: r.reg || '' }));
+  return rawExpense().map((r, i) => ({ ...r, id: r.id || 'EX-' + String(i + 1).padStart(4, '0'), vehicle: r.vehicle || '', reg: r.reg || '' }));
 }
 function prepStatus(h) {
   const t = today();
@@ -74,7 +83,8 @@ function prepStatus(h) {
 function regsFor(vehicle) {
   const a = hires().filter((h) => h.vehicle === vehicle).map((h) => h.reg);
   const b = expenses().filter((x) => x.vehicle === vehicle).map((x) => x.reg);
-  return unique(a.concat(b));
+  const c = DATA.regs.filter((x) => x.vehicle === vehicle).map((x) => x.reg);
+  return unique(a.concat(b).concat(c));
 }
 function ledger() {
   const rows = [];

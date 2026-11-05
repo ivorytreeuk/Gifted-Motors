@@ -3,10 +3,11 @@
 let session = sess.get();
 const route = () => (location.hash || '').replace(/^#\/?/, '') || 'income';
 function setHash(h) { try { history.replaceState(null, '', h); } catch (e) { location.hash = h; } }
+const hhmm = (iso) => { try { return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
 
 function header() {
   const r = route();
-  return `<div class="demo noprint">Demo version: entries stay on this device and are not sent to Google Sheets yet.</div>
+  return `${LIVE ? '' : '<div class="demo noprint">Demo version: entries stay on this device and are not sent to Google Sheets yet.</div>'}
   <header class="top noprint"><div class="top-in">
     <img src="logo.png" alt="Gifted Motors">
     <nav class="tabs" aria-label="Pages">
@@ -14,12 +15,19 @@ function header() {
       <a class="tab ${r === 'expense' ? 'on' : ''}" href="#/expense">Money out</a>
       <a class="tab ${r.charAt(0) === 'm' ? 'on' : ''}" href="#/m">Manager</a>
     </nav>
-    <div class="who">Signed in as <b>${esc(session.name)}</b> <button class="linkbtn" id="signout" type="button">Sign out</button></div>
+    <div class="who">Signed in as <b>${esc(session.name)}</b>
+      ${LIVE ? `<button class="linkbtn" id="refresh" type="button">${DATA.at ? 'Updated ' + esc(hhmm(DATA.at)) + ' · Refresh' : 'Refresh'}</button>` : ''}
+      <button class="linkbtn" id="signout" type="button">Sign out</button></div>
   </div></header>`;
 }
 function wireHeader() {
   const so = $('signout');
-  if (so) so.addEventListener('click', () => { session = null; sess.set(null); setHash('#/income'); render(); });
+  if (so) so.addEventListener('click', () => { session = null; sess.set(null); DATA.loaded = false; setHash('#/income'); render(); });
+  const rf = $('refresh');
+  if (rf) rf.addEventListener('click', async () => {
+    rf.textContent = 'Refreshing…'; rf.disabled = true;
+    try { await refreshData(); render(); } catch (e) { if (!handleApiError(e)) { rf.disabled = false; rf.textContent = 'Could not refresh. Try again'; } }
+  });
 }
 
 function signIn(errMsg) {
@@ -35,23 +43,39 @@ function signIn(errMsg) {
         <input id="pw" type="password" placeholder="Type the password">
         <div class="help">Ask the manager if you do not know it. Please do not share it outside the business.</div></div>
       <button class="btn" type="submit">Sign in</button>
-      <div class="help">Demo only: the staff password is <b>staff</b> and the manager password is <b>manager</b>.</div>
+      ${LIVE ? '' : '<div class="help">Demo only: the staff password is <b>staff</b> and the manager password is <b>manager</b>.</div>'}
     </form></main>`;
-  $('signinform').addEventListener('submit', (e) => {
+  $('signinform').addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = $('nm').value.trim();
+    const pw = $('pw').value;
     if (name.length < 2) return signIn('Please type your name so we know who is recording.');
-    if ($('pw').value !== DEMO_PASSWORDS.staff) return signIn('That password is not right. Please try again or ask the manager.');
-    session = { name };
-    sess.set(session);
-    setHash('#/income');
-    render();
+    if (!LIVE) {
+      if (pw !== DEMO_PASSWORDS.staff) return signIn('That password is not right. Please try again or ask the manager.');
+      session = { name };
+      sess.set(session);
+      setHash('#/income');
+      return render();
+    }
+    const btn = $('signinform').querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'Signing in…';
+    try {
+      const j = await api('login', { name, password: pw });
+      session = { name: j.name, token: j.token, mgr: false };
+      sess.set(session);
+      applyConfig(j);
+      DATA.loaded = false;
+      setHash('#/income');
+      render();
+    } catch (err) { signIn(err.message); }
   });
 }
 
 function recent(kind) {
-  const rows = (kind === 'hire' ? hires() : expenses()).slice(-3).reverse();
-  if (!rows.length) return '<div class="empty">Nothing recorded yet on this device.</div>';
+  const rows = LIVE
+    ? (kind === 'hire' ? DATA.recentHires.map(shapeHire) : DATA.recentExpenses)
+    : (kind === 'hire' ? hires() : expenses()).slice(-3).reverse();
+  if (!rows.length) return `<div class="empty">${LIVE ? 'You have not recorded anything yet.' : 'Nothing recorded yet on this device.'}</div>`;
   return rows.map((r) => kind === 'hire'
     ? `<div class="mini"><div>${esc(r.customer)}<small>${esc(r.id)} · ${esc(r.vehicle)} ${esc(r.reg)}</small></div><b>${money(r.paid)}</b></div>`
     : `<div class="mini"><div>${esc(r.what)}<small>${esc(r.category)}${r.reg ? ' · ' + esc(r.reg) : ''} · ${esc(fmtD(r.date))}</small></div><b>${money(r.amount)}</b></div>`).join('');
@@ -60,9 +84,9 @@ function recent(kind) {
 function vehicleSelect(state, noneLabel) {
   return `<select id="vehicle"><option value="">${noneLabel}</option>${VEHICLES.map((v) => `<option ${state.vehicle === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
 }
-function regField(state, e, optionalNote) {
+function regField(state, e) {
   const list = regsFor(state.vehicle || '').map((r) => `<option value="${esc(r)}">`).join('');
-  return `<div id="regbox" ${state.vehicle ? '' : 'hidden'}>${field('reg', 'Registration number (number plate)', 'Type the number plate exactly as it is on the vehicle.' + (optionalNote || ''),
+  return `<div id="regbox" ${state.vehicle ? '' : 'hidden'}>${field('reg', 'Registration number (number plate)', 'Type the number plate exactly as it is on the vehicle.',
     `<input id="reg" type="text" list="regs" autocapitalize="characters" autocomplete="off" placeholder="e.g. ABC 1234" value="${esc(state.reg || '')}"><datalist id="regs">${list}</datalist>`, e.reg)}</div>`;
 }
 function wireVehicle() {
@@ -72,7 +96,51 @@ function wireVehicle() {
     $('regs').innerHTML = regsFor(v).map((r) => `<option value="${esc(r)}">`).join('');
   });
 }
+const saveErrorBox = (state) => (state.saveError ? `<div class="errbox" role="alert">${esc(state.saveError)}</div>` : '');
+function setSaving(on) { const b = document.querySelector('#f button[type=submit]'); if (b) { b.disabled = on; b.textContent = on ? 'Saving…' : 'Save'; } }
 
+// ---- Saving (Google Sheet in live mode, this device in demo mode) ----------
+async function quietRefresh() { try { await refreshData(); } catch (e) { /* the entry is saved; the lists refresh next time */ } }
+
+async function saveHire(s, clientId) {
+  const rate = parseFloat(s.rate), days = parseFloat(s.days), paid = parseFloat(s.paid);
+  if (LIVE) {
+    const j = await api('addHire', { clientId, hire: { date: s.date, customer: s.customer, phone: s.phone, vehicle: s.vehicle, reg: s.reg, rate, days, paid, prepaid: !!s.prepaid, startDate: s.startDate } });
+    await quietRefresh();
+    return { id: j.id, balance: j.balance };
+  }
+  const list = hires();
+  const next = list.reduce((m, h) => Math.max(m, parseInt(String(h.id).replace(/\D/g, ''), 10) || 0), 0) + 1;
+  const id = 'GM-' + String(next).padStart(4, '0');
+  const ts = new Date().toISOString();
+  list.push({ id, ts, date: s.date, customer: s.customer, phone: s.phone, vehicle: s.vehicle, reg: s.reg, rate, days, by: session.name, prepaid: !!s.prepaid, startDate: s.prepaid ? s.startDate : s.date, payments: [{ ts, date: s.date, amount: paid, by: session.name }] });
+  saveHires(list);
+  return { id, balance: rate * days - paid };
+}
+async function savePayment(s, clientId, target) {
+  const a = parseFloat(s.amount);
+  if (LIVE) {
+    const j = await api('addPayment', { clientId, payment: { id: s.bookingId, date: s.date, amount: a } });
+    await quietRefresh();
+    return { balance: j.balance, customer: j.customer };
+  }
+  const list = hires();
+  list.find((x) => x.id === s.bookingId).payments.push({ ts: new Date().toISOString(), date: s.date, amount: a, by: session.name });
+  saveHires(list);
+  return { balance: target.balance - a, customer: target.customer };
+}
+async function saveExpense(s, clientId) {
+  if (LIVE) {
+    await api('addExpense', { clientId, expense: { date: s.date, what: s.what, vehicle: s.vehicle, reg: s.vehicle ? s.reg : '', category: s.category, amount: parseFloat(s.amount) } });
+    await quietRefresh();
+    return;
+  }
+  const rows = store.get('gm_expense');
+  rows.push({ ts: new Date().toISOString(), date: s.date, what: s.what, vehicle: s.vehicle, reg: s.vehicle ? s.reg : '', category: s.category, amount: parseFloat(s.amount), by: session.name });
+  store.set('gm_expense', rows);
+}
+
+// ---- Money in ------------------------------------------------------------------
 function newHireFields(s, e) {
   return `<div class="row2">
       ${field('date', 'Date paid', 'The day the customer paid you.', `<input id="date" type="date" value="${esc(s.date || today())}">`, e.date)}
@@ -121,10 +189,20 @@ function payFields(s, e, open) {
     ${h ? `<div class="balance"><div class="l">Balance after this payment</div><div class="v" id="bal2">${money(h.balance)}</div><div class="n">Worked out for you. The original hire record is updated, not duplicated.</div></div>` : ''}`;
 }
 
+async function switchMode(mode) {
+  if (LIVE && mode === 'pay') {
+    const f = $('f');
+    if (f) f.innerHTML = '<div class="empty">Loading the latest balances…</div>';
+    try { await refreshData(); } catch (e) { if (handleApiError(e)) return; return incomeView({ mode: 'pay', saveError: e.message }); }
+  }
+  incomeView({ mode });
+}
+
 function incomeView(state) {
   state = state || {};
   const mode = state.mode || 'new';
   const e = state.errors || {};
+  const clientId = state.clientId || uid();
   const open = hires().filter((h) => h.balance > 0.005);
   app.innerHTML = header() + `<main class="page">
     <div><h1>Record money coming in</h1><p class="lead">First choose what is happening, then fill in the boxes.</p></div>
@@ -139,17 +217,19 @@ function incomeView(state) {
           ${mode === 'new' ? newHireFields(state, e) : payFields(state, e, open)}
           <div class="stamp">This entry will be saved under your name, <b>${esc(session.name)}</b>, with today's date and time.</div>
           ${state.savedMsg ? `<div class="ok" role="status">${esc(state.savedMsg)}</div>` : ''}
+          ${saveErrorBox(state)}
           ${mode === 'pay' && !open.length ? '' : '<button class="btn" type="submit">Save</button>'}
         </form>
       </div>
       <aside class="side">
         <div class="card"><h2>Quick guide</h2><p><b>New hire:</b> a customer is starting a hire, or paying in advance for one.</p><p><b>Paying a balance:</b> a customer who already hired is paying more towards what they owe.</p><p>Made a mistake after saving? Tell the manager. Please do not enter it twice.</p></div>
-        <div class="card" style="margin-top:20px"><h2>Latest hires</h2>${recent('hire')}</div>
+        <div class="card" style="margin-top:20px"><h2>${LIVE ? 'Your latest hires' : 'Latest hires'}</h2>${recent('hire')}</div>
       </aside>
     </div></main>`;
   wireHeader();
-  qa('[data-mode]').forEach((b) => b.addEventListener('click', () => incomeView({ mode: b.dataset.mode })));
+  qa('[data-mode]').forEach((b) => b.addEventListener('click', () => switchMode(b.dataset.mode)));
   const val = (id) => { const el = $(id); return el ? el.value : ''; };
+  let saving = false;
 
   if (mode === 'new') {
     wireVehicle();
@@ -162,14 +242,15 @@ function incomeView(state) {
     const calc = () => { $('bal').textContent = money((parseFloat(val('rate')) || 0) * (parseFloat(val('days')) || 0) - (parseFloat(val('paid')) || 0)); };
     ['rate', 'days', 'paid'].forEach((id) => $(id).addEventListener('input', calc));
     calc();
-    $('f').addEventListener('submit', (ev) => {
+    $('f').addEventListener('submit', async (ev) => {
       ev.preventDefault();
+      if (saving) return;
       const s = { mode, date: val('date'), customer: val('customer').trim(), phone: val('phone').trim(), vehicle: val('vehicle'), reg: normReg(val('reg')), rate: val('rate'), days: val('days'), paid: val('paid'), prepaid, startDate: prepaid ? val('startDate') : '' };
       const errors = {};
       if (!s.date) errors.date = 'Please pick the date.';
       if (s.customer.length < 2) errors.customer = 'Please type the customer name.';
-      if (!s.vehicle) errors.vehicle = 'Please choose a type of vehicle.';
       if (!phoneOK(s.phone)) errors.phone = 'Please type the customer phone number, using numbers only (a + at the start is fine).';
+      if (!s.vehicle) errors.vehicle = 'Please choose a type of vehicle.';
       if (s.vehicle && !regOK(s.reg)) errors.reg = 'Please type the registration number (number plate), for example ABC 1234.';
       if (!(parseFloat(s.rate) > 0)) errors.rate = 'Please type the daily rate, for example 500.';
       if (!(parseFloat(s.days) >= 1)) errors.days = 'Please type how many days.';
@@ -179,16 +260,15 @@ function incomeView(state) {
         else if (s.date && s.startDate < s.date) errors.startDate = 'The hire cannot start before the day it was paid for.';
         if (!(parseFloat(s.paid) > 0)) errors.paid = 'A prepayment needs an amount paid. Type how much the customer paid in advance.';
       }
-      if (Object.keys(errors).length) return incomeView({ ...s, errors });
-      const list = hires();
-      const next = list.reduce((m, h) => Math.max(m, parseInt(String(h.id).replace(/\D/g, ''), 10) || 0), 0) + 1;
-      const id = 'GM-' + String(next).padStart(4, '0');
-      const ts = new Date().toISOString();
-      const rate = parseFloat(s.rate), days = parseFloat(s.days), paid = parseFloat(s.paid);
-      list.push({ id, ts, date: s.date, customer: s.customer, phone: s.phone, vehicle: s.vehicle, reg: s.reg, rate, days, by: session.name, prepaid, startDate: prepaid ? s.startDate : s.date, payments: [{ ts, date: s.date, amount: paid, by: session.name }] });
-      saveHires(list);
-      const bal = rate * days - paid;
-      incomeView({ mode: 'new', savedMsg: `Saved as booking ${id}${prepaid ? ' (prepaid, hire starts ' + fmtD(s.startDate) + ')' : ''}. ${bal > 0.005 ? 'Balance still owed: ' + money(bal) + '.' : 'Paid in full.'}` });
+      if (Object.keys(errors).length) return incomeView({ ...s, errors, clientId });
+      saving = true; setSaving(true);
+      try {
+        const r = await saveHire(s, clientId);
+        incomeView({ mode: 'new', savedMsg: `Saved as booking ${r.id}${prepaid ? ' (prepaid, hire starts ' + fmtD(s.startDate) + ')' : ''}. ${r.balance > 0.005 ? 'Balance still owed: ' + money(r.balance) + '.' : 'Paid in full.'}` });
+      } catch (err) {
+        if (handleApiError(err)) return;
+        incomeView({ ...s, clientId, saveError: err.message });
+      }
     });
   } else {
     const bsel = $('booking');
@@ -199,8 +279,9 @@ function incomeView(state) {
       const calc = () => { $('bal2').textContent = money(target0.balance - (parseFloat(amt.value) || 0)); };
       amt.addEventListener('input', calc); calc();
     }
-    $('f').addEventListener('submit', (ev) => {
+    $('f').addEventListener('submit', async (ev) => {
       ev.preventDefault();
+      if (saving) return;
       const s = { mode, date: val('date'), bookingId: val('booking'), amount: val('amount') };
       const errors = {};
       const target = open.find((x) => x.id === s.bookingId);
@@ -209,19 +290,24 @@ function incomeView(state) {
       const a = parseFloat(s.amount);
       if (!(a > 0)) errors.amount = 'Please type the amount being paid, for example 200.';
       else if (target && a > target.balance + 0.005) errors.amount = `That is more than the ${money(target.balance)} still owed. Please check the amount.`;
-      if (Object.keys(errors).length) return incomeView({ ...s, errors });
-      const list = hires();
-      list.find((x) => x.id === s.bookingId).payments.push({ ts: new Date().toISOString(), date: s.date, amount: a, by: session.name });
-      saveHires(list);
-      const left = target.balance - a;
-      incomeView({ mode: 'pay', savedMsg: left > 0.005 ? `Saved. ${target.customer} still owes ${money(left)} on booking ${target.id}.` : `Saved. ${target.customer} has now paid booking ${target.id} in full. Thank you.` });
+      if (Object.keys(errors).length) return incomeView({ ...s, errors, clientId });
+      saving = true; setSaving(true);
+      try {
+        const r = await savePayment(s, clientId, target);
+        incomeView({ mode: 'pay', savedMsg: r.balance > 0.005 ? `Saved. ${r.customer} still owes ${money(r.balance)} on booking ${s.bookingId}.` : `Saved. ${r.customer} has now paid booking ${s.bookingId} in full. Thank you.` });
+      } catch (err) {
+        if (handleApiError(err)) return;
+        incomeView({ ...s, clientId, saveError: err.message });
+      }
     });
   }
 }
 
+// ---- Money out ---------------------------------------------------------------------
 function expenseView(state) {
   state = state || { date: today(), what: '', category: '', amount: '', vehicle: '', reg: '' };
   const e = state.errors || {};
+  const clientId = state.clientId || uid();
   const catOpts = ['<option value="">Choose a category</option>'].concat(CATEGORIES.map((c) => `<option ${state.category === c ? 'selected' : ''}>${esc(c)}</option>`)).join('');
   app.innerHTML = header() + `<main class="page">
     <div><h1>Record money going out</h1><p class="lead">Use this for anything the business pays for: fuel, repairs, drivers, marketing, salaries. One entry per receipt.</p></div>
@@ -237,6 +323,7 @@ function expenseView(state) {
         </div>
         <div class="stamp">This entry will be saved under your name, <b>${esc(session.name)}</b>, with today's date and time.</div>
         ${state.saved ? '<div class="ok" role="status">Saved. Thank you, your expense is recorded.</div>' : ''}
+        ${saveErrorBox(state)}
         <button class="btn" type="submit">Save</button>
       </form>
       <aside class="side">
@@ -247,8 +334,10 @@ function expenseView(state) {
   wireHeader();
   wireVehicle();
   const val = (id) => $(id).value;
-  $('f').addEventListener('submit', (ev) => {
+  let saving = false;
+  $('f').addEventListener('submit', async (ev) => {
     ev.preventDefault();
+    if (saving) return;
     const s = { date: val('date'), what: val('what').trim(), vehicle: val('vehicle'), reg: normReg(val('reg')), category: val('category'), amount: val('amount') };
     const errors = {};
     if (!s.date) errors.date = 'Please pick the date.';
@@ -256,10 +345,14 @@ function expenseView(state) {
     if (s.vehicle && !regOK(s.reg)) errors.reg = 'Please type the registration number (number plate), for example ABC 1234.';
     if (!s.category) errors.category = 'Please choose a category.';
     if (!(parseFloat(s.amount) > 0)) errors.amount = 'Please type the amount, for example 250.';
-    if (Object.keys(errors).length) return expenseView({ ...s, errors });
-    const rows = store.get('gm_expense');
-    rows.push({ ts: new Date().toISOString(), date: s.date, what: s.what, vehicle: s.vehicle, reg: s.vehicle ? s.reg : '', category: s.category, amount: parseFloat(s.amount), by: session.name });
-    store.set('gm_expense', rows);
-    expenseView({ date: today(), what: '', category: '', amount: '', vehicle: '', reg: '', saved: true });
+    if (Object.keys(errors).length) return expenseView({ ...s, errors, clientId });
+    saving = true; setSaving(true);
+    try {
+      await saveExpense(s, clientId);
+      expenseView({ date: today(), what: '', category: '', amount: '', vehicle: '', reg: '', saved: true });
+    } catch (err) {
+      if (handleApiError(err)) return;
+      expenseView({ ...s, clientId, saveError: err.message });
+    }
   });
 }
