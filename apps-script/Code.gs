@@ -10,6 +10,10 @@
  * To change a password later: edit it below, then Deploy > Manage deployments > Edit > Version: New version > Deploy.
  */
 
+// Optional: an email address that gets a message whenever a customer sends a booking request on the website.
+// Leave empty ('') for no emails. The requests always appear on the "Booking requests" tab either way.
+const NOTIFY_EMAIL = '';
+
 const STAFF_PASSWORD = 'CHANGE-ME-STAFF';
 const MANAGER_PASSWORD = 'CHANGE-ME-MANAGER';
 
@@ -18,11 +22,12 @@ const MANAGER_PASSWORD = 'CHANGE-ME-MANAGER';
 const BOOKING_PREFIX = 'GM';
 const SESSION_SECONDS = 21600; // 6 hours. After that, staff sign in again.
 
-const SHEET = { hires: 'Hires', pays: 'Payments log', exp: 'Expenses', lists: 'Lists', reports: 'Monthly reports', readme: 'Read me' };
+const SHEET = { hires: 'Hires', pays: 'Payments log', exp: 'Expenses', lists: 'Lists', reports: 'Monthly reports', requests: 'Booking requests', readme: 'Read me' };
 const HIRE_HEAD = ['Booking', 'Date', 'Customer', 'Phone', 'Vehicle', 'Registration', 'Daily rate (K)', 'Days', 'Total (K)', 'Paid so far (K)', 'Balance (K)', 'Prepaid?', 'Hire starts', 'Entered by', 'Entered at'];
 const PAY_HEAD = ['Booking', 'Date paid', 'Customer', 'Type', 'Amount (K)', 'Entered by', 'Entered at'];
 const EXP_HEAD = ['Ref', 'Date', 'What it was for', 'Category', 'Vehicle', 'Registration', 'Amount (K)', 'Entered by', 'Entered at'];
 const REPORT_HEAD = ['Month', 'Money in (K)', 'Money out (K)', 'Net (K)', 'New hires', 'Balances owed at capture (K)', 'Prepayments held at capture (K)', 'Captured at'];
+const REQ_HEAD = ['Request', 'Received', 'Status', 'Customer', 'Phone', 'Email', 'Vehicle', 'Pick-up date', 'Return date', 'Days', 'Pick-up place', 'Driver?', 'How they will pay', 'Notes'];
 const DEFAULT_VEHICLES = ['Toyota Land Cruiser Prado', 'Toyota Hilux', 'Honda Fit', 'Toyota Hiace van', 'Toyota Alphard / Vellfire'];
 const DEFAULT_CATEGORIES = ['Fuel', 'Mechanic and repairs', 'Drivers', 'Marketing', 'Salaries', 'Other'];
 
@@ -45,6 +50,9 @@ function setup() {
   const pays = make(SHEET.pays, PAY_HEAD);
   const exp = make(SHEET.exp, EXP_HEAD);
   const reports = make(SHEET.reports, REPORT_HEAD);
+  const requests = make(SHEET.requests, REQ_HEAD);
+  requests.getRange('A:A').setNumberFormat('@'); requests.getRange('C:F').setNumberFormat('@'); requests.getRange('K:N').setNumberFormat('@');
+  requests.getRange('B:B').setNumberFormat('dd mmm yyyy hh:mm'); requests.getRange('H:I').setNumberFormat('dd mmm yyyy');
   const lists = make(SHEET.lists, ['Vehicles (edit this list)', 'Expense categories (edit this list)']);
   const readme = make(SHEET.readme, ['Gifted Motors records']);
 
@@ -76,6 +84,7 @@ function setup() {
       'Payments log: every payment ever made, with who entered it and when.',
       'Expenses: every expense, with who entered it and when.',
       'Lists: type a new vehicle or expense category at the bottom of its column and it appears on the website.',
+      'Booking requests: enquiries sent from the public website. Change the Status column (New, Confirmed, Declined) as you deal with them.',
       'Monthly reports: a saved copy of each month\'s figures, added automatically on the 1st of every month.',
       'Please do not edit or delete rows in Hires, Payments log or Expenses. Ask for help if something was entered wrongly.'
     ];
@@ -122,6 +131,8 @@ function doPost(e) {
 function handle_(req) {
   const action = String(req.action || '');
   if (action === 'login') return login_(req);
+  if (action === 'bookingRequest') return once_(req, () => bookingRequest_(req));
+  if (action === 'publicLists') { const l = readLists_(); return { ok: true, vehicles: l.vehicles }; }
   const sess = session_(req.token);
   switch (action) {
     case 'managerLogin': return managerLogin_(req, sess);
@@ -407,6 +418,48 @@ function addExpense_(sess, req) {
   const id = nextNumber_(es, 'EX');
   es.getRange(es.getLastRow() + 1, 1, 1, 9).setValues([[id, date, what, category, vehicle, reg, amount, sess.name, new Date()]]);
   return { ok: true, id: id };
+}
+
+// ============================================================================
+// Public booking requests (from the customer website, no sign-in)
+// ============================================================================
+
+function bookingRequest_(req) {
+  const b = req.booking || {};
+  if (String(b.website || '') !== '') fail_('Thank you.', 'invalid'); // hidden box that only robots fill in
+  const cache = CacheService.getScriptCache();
+  const hits = Number(cache.get('reqs') || 0);
+  if (hits >= 40) fail_('We are receiving a lot of requests right now. Please call us instead.', 'busy');
+  const name = text_(b.name, 'name', 2, 80);
+  const phone = phone_(b.phone);
+  const email = String(b.email || '').trim();
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) fail_('Please check the email address.');
+  const lists = readLists_();
+  const vehicle = String(b.vehicle || '');
+  if (lists.vehicles.indexOf(vehicle) < 0) fail_('Please choose a vehicle from the list.');
+  const from = parseDate_(b.from, 'pick-up date');
+  const to = parseDate_(b.to, 'return date');
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (from < today) fail_('The pick-up date cannot be in the past.');
+  if (to < from) fail_('The return date cannot be before the pick-up date.');
+  const days = Math.round((to - from) / 86400000) + 1;
+  if (days > 365) fail_('Please check the dates.');
+  const place = text_(b.place, 'pick-up place', 2, 120);
+  const driver = ['Self-drive', 'With a driver', 'Not sure'].indexOf(b.driver) >= 0 ? b.driver : 'Not sure';
+  const pay = ['Airtel Money', 'Pay before collecting the vehicle', 'Not sure yet'].indexOf(b.pay) >= 0 ? b.pay : 'Not sure yet';
+  const notes = String(b.notes || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+  const sh = sheet_(SHEET.requests);
+  const id = nextNumber_(sh, 'BR');
+  sh.getRange(sh.getLastRow() + 1, 1, 1, 14).setValues([[id, new Date(), 'New', name, phone, email, vehicle, from, to, days, place, driver, pay, notes]]);
+  cache.put('reqs', String(hits + 1), 3600);
+  if (NOTIFY_EMAIL) {
+    try {
+      MailApp.sendEmail(NOTIFY_EMAIL, 'New booking request ' + id + ' from ' + name,
+        id + '\n' + name + ' · ' + phone + '\n' + vehicle + '\n' + days + ' day(s): ' + Utilities.formatDate(from, tz_(), 'dd MMM yyyy') + ' to ' + Utilities.formatDate(to, tz_(), 'dd MMM yyyy') +
+        '\nPick-up: ' + place + '\nDriver: ' + driver + '\nPayment: ' + pay + (notes ? '\nNotes: ' + notes : ''));
+    } catch (e) { /* the request is saved; the email is a bonus */ }
+  }
+  return { ok: true, id: id, days: days };
 }
 
 // ============================================================================
