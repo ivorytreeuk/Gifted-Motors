@@ -6,7 +6,7 @@
 
 // ---- Things the client can change easily -------------------------------
 // Paste the Google web app address here to switch from demo mode to the real Google Sheet.
-const API_URL = '';
+const API_URL = 'https://script.google.com/macros/s/AKfycbwk3i5xXCIqEuQ8OrSenIXnuVpMjS9R98YCzFPD83pXpIghozSnSI4vtYKMamZi0Ef_/exec';
 const CONFIG = {
   business: 'Gifted Motors',
   legalName: '[Registered business name]',
