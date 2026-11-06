@@ -9,11 +9,11 @@
 const API_URL = 'https://script.google.com/macros/s/AKfycbwk3i5xXCIqEuQ8OrSenIXnuVpMjS9R98YCzFPD83pXpIghozSnSI4vtYKMamZi0Ef_/exec';
 const CONFIG = {
   business: 'Gifted Motors',
-  legalName: '[Registered business name]',
-  regNo: '[Company registration number]',
-  address: '[Business address], Zambia',
-  contact: '[Phone number / email]',
-  preparedBy: '[Manager name]'
+  legalName: 'Gifted Motors Limited',
+  regNo: '',
+  address: 'Woodlands, Zambia',
+  contact: '+260 975 227 125',
+  preparedBy: ''
 };
 let VEHICLES = [
   'Toyota Land Cruiser Prado',

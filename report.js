@@ -51,7 +51,7 @@ function reportHTML(r) {
       <div class="meta">
         <div><span>Business</span><b>${esc(CONFIG.business)}</b></div>
         <div><span>Registered name</span><b>${esc(CONFIG.legalName)}</b></div>
-        <div><span>Registration number</span><b>${esc(CONFIG.regNo)}</b></div>
+        ${CONFIG.regNo ? `<div><span>Registration number</span><b>${esc(CONFIG.regNo)}</b></div>` : ''}
         <div><span>Address</span><b>${esc(CONFIG.address)}</b></div>
         <div><span>Reporting period</span><b>${esc(rangeLabel(r))}</b></div>
         <div><span>Report generated</span><b>${esc(fmtDT(now.toISOString()))}</b></div>
@@ -107,7 +107,7 @@ function reportHTML(r) {
       <p>Money received is the payments actually collected, counted on the date of payment. Money spent is the expenses paid, counted on the date of payment. This is a management report prepared from the business's own records. It has not been audited or reviewed by an accountant, and it does not replace bank statements, receipts or formal accounts. Where a bank or investor asks for supporting evidence, provide this report together with bank statements for the same period.</p>
     </div>
     <div class="rsec sig">
-      <div><div class="line"></div><span>Prepared by: ${esc(CONFIG.preparedBy)}</span></div>
+      <div><div class="line"></div><span>${CONFIG.preparedBy ? 'Prepared by: ' + esc(CONFIG.preparedBy) : 'Name'}</span></div>
       <div><div class="line"></div><span>Signature</span></div>
       <div><div class="line"></div><span>Date</span></div>
     </div>
