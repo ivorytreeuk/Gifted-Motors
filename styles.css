@@ -188,3 +188,13 @@ a.stat:focus-visible,a.panel:focus-visible,.more:focus-visible{outline:3px solid
 .loading{max-width:520px;margin:20vh auto;padding:0 16px;display:flex;flex-direction:column;align-items:center;gap:16px;text-align:center;color:var(--navy,#0B2A5B);font-weight:500}
 .spin{width:36px;height:36px;border-radius:50%;border:4px solid #d6dcea;border-top-color:#F5B800;animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
+
+.revbox{border:2px solid #F5B81C;background:#FFFBEF}
+.revrow{display:grid;gap:10px;padding:14px 0;border-top:1px solid #E7DDB8}
+.revrow:first-of-type{border-top:0}
+.revrow p{margin:6px 0 0;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.revrow small{color:#4A5876;margin-left:6px}
+.stars{color:#B07B00;letter-spacing:2px}
+.revbtns{display:flex;gap:10px;flex-wrap:wrap}
+.revnone{font-size:15px}
+@media(min-width:700px){.revrow{grid-template-columns:1fr auto;align-items:start}.revrow .errbox{grid-column:1/-1}}

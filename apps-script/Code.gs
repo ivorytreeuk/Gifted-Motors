@@ -22,12 +22,13 @@ const MANAGER_PASSWORD = 'CHANGE-ME-MANAGER';
 const BOOKING_PREFIX = 'GM';
 const SESSION_SECONDS = 21600; // 6 hours. After that, staff sign in again.
 
-const SHEET = { hires: 'Hires', pays: 'Payments log', exp: 'Expenses', lists: 'Lists', reports: 'Monthly reports', requests: 'Booking requests', readme: 'Read me' };
+const SHEET = { hires: 'Hires', pays: 'Payments log', exp: 'Expenses', lists: 'Lists', reports: 'Monthly reports', requests: 'Booking requests', reviews: 'Reviews', readme: 'Read me' };
 const HIRE_HEAD = ['Booking', 'Date', 'Customer', 'Phone', 'Vehicle', 'Registration', 'Daily rate (K)', 'Days', 'Total (K)', 'Paid so far (K)', 'Balance (K)', 'Prepaid?', 'Hire starts', 'Entered by', 'Entered at'];
 const PAY_HEAD = ['Booking', 'Date paid', 'Customer', 'Type', 'Amount (K)', 'Entered by', 'Entered at'];
 const EXP_HEAD = ['Ref', 'Date', 'What it was for', 'Category', 'Vehicle', 'Registration', 'Amount (K)', 'Entered by', 'Entered at'];
 const REPORT_HEAD = ['Month', 'Money in (K)', 'Money out (K)', 'Net (K)', 'New hires', 'Balances owed at capture (K)', 'Prepayments held at capture (K)', 'Captured at'];
 const REQ_HEAD = ['Request', 'Received', 'Status', 'Customer', 'Phone', 'Email', 'Vehicle', 'Pick-up date', 'Return date', 'Days', 'Pick-up place', 'Driver?', 'How they will pay', 'Notes'];
+const REV_HEAD = ['Review', 'Received', 'Status', 'Name', 'Rating (1-5)', 'About', 'What they said', 'Decided at'];
 const DEFAULT_VEHICLES = ['Toyota Land Cruiser Prado', 'Toyota Hilux', 'Honda Fit', 'Toyota Hiace van', 'Toyota Alphard / Vellfire'];
 const DEFAULT_CATEGORIES = ['Fuel', 'Mechanic and repairs', 'Drivers', 'Marketing', 'Salaries', 'Other'];
 
@@ -51,6 +52,9 @@ function setup() {
   const exp = make(SHEET.exp, EXP_HEAD);
   const reports = make(SHEET.reports, REPORT_HEAD);
   const requests = make(SHEET.requests, REQ_HEAD);
+  const reviews = make(SHEET.reviews, REV_HEAD);
+  reviews.getRange('A:A').setNumberFormat('@'); reviews.getRange('C:D').setNumberFormat('@'); reviews.getRange('F:G').setNumberFormat('@');
+  reviews.getRange('B:B').setNumberFormat('dd mmm yyyy hh:mm'); reviews.getRange('H:H').setNumberFormat('dd mmm yyyy hh:mm');
   requests.getRange('A:A').setNumberFormat('@'); requests.getRange('C:F').setNumberFormat('@'); requests.getRange('K:N').setNumberFormat('@');
   requests.getRange('B:B').setNumberFormat('dd mmm yyyy hh:mm'); requests.getRange('H:I').setNumberFormat('dd mmm yyyy');
   const lists = make(SHEET.lists, ['Vehicles (edit this list)', 'Expense categories (edit this list)']);
@@ -85,6 +89,7 @@ function setup() {
       'Expenses: every expense, with who entered it and when.',
       'Lists: type a new vehicle or expense category at the bottom of its column and it appears on the website.',
       'Booking requests: enquiries sent from the public website. Change the Status column (New, Confirmed, Declined) as you deal with them.',
+      'Reviews: reviews sent from the website. New ones show as Pending. Approve them on the Manager page of the staff portal (or change Status to Approved here) and they appear on the website.',
       'Monthly reports: a saved copy of each month\'s figures, added automatically on the 1st of every month.',
       'Please do not edit or delete rows in Hires, Payments log or Expenses. Ask for help if something was entered wrongly.'
     ];
@@ -132,10 +137,14 @@ function handle_(req) {
   const action = String(req.action || '');
   if (action === 'login') return login_(req);
   if (action === 'bookingRequest') return once_(req, () => bookingRequest_(req));
+  if (action === 'reviewSubmit') return once_(req, () => reviewSubmit_(req));
+  if (action === 'publicReviews') return publicReviews_();
   if (action === 'publicLists') { const l = readLists_(); return { ok: true, vehicles: l.vehicles }; }
   const sess = session_(req.token);
   switch (action) {
     case 'managerLogin': return managerLogin_(req, sess);
+    case 'listReviews': requireManager_(sess); return listReviews_();
+    case 'setReview': requireManager_(sess); return once_(req, () => setReview_(sess, req));
     case 'staffData': return staffData_(sess);
     case 'getAll': requireManager_(sess); return getAll_(sess);
     case 'addHire': return once_(req, () => addHire_(sess, req));
@@ -460,6 +469,57 @@ function bookingRequest_(req) {
     } catch (e) { /* the request is saved; the email is a bonus */ }
   }
   return { ok: true, id: id, days: days };
+}
+
+// ============================================================================
+// Customer reviews: sent from the website, shown only after the manager approves them
+// ============================================================================
+
+function reviewSubmit_(req) {
+  const r = req.review || {};
+  if (String(r.website || '') !== '') fail_('Thank you.', 'invalid'); // hidden box that only robots fill in
+  const cache = CacheService.getScriptCache();
+  const hits = Number(cache.get('revs') || 0);
+  if (hits >= 20) fail_('We are receiving a lot of reviews right now. Please try again later.', 'busy');
+  const name = text_(r.name, 'name', 2, 60);
+  const rating = Math.round(num_(r.rating, 'star rating', 1, 5));
+  const about = ['Car hire', 'Import and clearance', 'Buying a car', 'Selling a car', 'Something else'].indexOf(r.about) >= 0 ? r.about : 'Something else';
+  const said = text_(r.text, 'review', 10, 600);
+  if (/https?:\/\/|www\./i.test(said)) fail_('Please leave web links out of your review.');
+  const sh = sheet_(SHEET.reviews);
+  const id = nextNumber_(sh, 'RV');
+  sh.getRange(sh.getLastRow() + 1, 1, 1, 8).setValues([[id, new Date(), 'Pending', name, rating, about, said, '']]);
+  cache.put('revs', String(hits + 1), 3600);
+  if (NOTIFY_EMAIL) {
+    try { MailApp.sendEmail(NOTIFY_EMAIL, 'New review to approve: ' + id, name + ' gave ' + rating + ' out of 5.\n\n' + said + '\n\nOpen the Manager page on the staff portal to approve or reject it.'); } catch (e) { /* saved anyway */ }
+  }
+  return { ok: true, id: id };
+}
+
+function readReviews_() {
+  return rows_(SHEET.reviews, 8).map((r, i) => ({ row: i + 2, id: String(r[0]), ts: ts_(r[1]), status: String(r[2] || 'Pending'), name: String(r[3]), rating: Number(r[4]) || 0, about: String(r[5]), text: String(r[6]) })).filter((r) => r.id);
+}
+
+function publicReviews_() {
+  const list = readReviews_().filter((r) => r.status === 'Approved').sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 50)
+    .map((r) => ({ name: r.name, rating: r.rating, about: r.about, text: r.text, date: r.ts.slice(0, 10) }));
+  return { ok: true, reviews: list };
+}
+
+function listReviews_() {
+  const all = readReviews_().sort((a, b) => b.ts.localeCompare(a.ts));
+  return { ok: true, pending: all.filter((r) => r.status === 'Pending'), approved: all.filter((r) => r.status === 'Approved').length, rejected: all.filter((r) => r.status === 'Rejected').length };
+}
+
+function setReview_(sess, req) {
+  const status = ['Approved', 'Rejected', 'Pending'].indexOf(req.status) >= 0 ? req.status : '';
+  if (!status) fail_('Please choose Approve or Reject.');
+  const hit = readReviews_().filter((r) => r.id === String(req.id))[0];
+  if (!hit) fail_('That review could not be found. Please refresh.');
+  const sh = sheet_(SHEET.reviews);
+  sh.getRange(hit.row, 3, 1, 1).setValues([[status]]);
+  sh.getRange(hit.row, 8, 1, 1).setValues([[new Date()]]);
+  return { ok: true, id: hit.id, status: status };
 }
 
 // ============================================================================

@@ -51,6 +51,7 @@ function overviewView() {
   app.innerHTML = header() + `<main class="page">
     <div class="toolbar"><div><h1>Manager overview</h1><p class="lead">Tap any box or panel to open the full details.</p></div>
       <a class="btn" href="#/m/report" style="display:inline-flex;align-items:center;text-decoration:none">Download financial report</a></div>
+    ${LIVE ? '<div id="revpanel"></div>' : ''}
     <div class="card">${rangeControl('o', rng)}<div class="help" style="margin-top:12px">The period applies to money in, money out and the breakdowns. "Still owed" and "Prepaid" always show the position right now.</div></div>
     <div class="stats">
       ${link('#/m/orders', 'stat', `<div class="l">Money in</div><div class="v">${money(A.tin)}</div><div class="go">View all orders →</div>`)}
@@ -75,6 +76,7 @@ function overviewView() {
   </main>`;
   wireHeader();
   wireRange('o', rng, overviewView);
+  if (LIVE) loadReviewPanel();
   if ($('clear')) $('clear').addEventListener('click', () => { if (confirm('Remove all demo entries from this device?')) { store.set('gm_income', []); store.set('gm_expense', []); overviewView(); } });
 }
 
@@ -243,4 +245,29 @@ function owingView() {
   };
   $('owq').addEventListener('input', () => { owF.q = $('owq').value; list(); });
   list();
+}
+
+// ---- Website reviews waiting for approval (live mode only) -------------------------
+async function loadReviewPanel() {
+  const box = $('revpanel');
+  if (!box) return;
+  let j;
+  try { j = await api('listReviews'); } catch (e) { if (handleApiError(e)) return; box.innerHTML = ''; return; }
+  if (!$('revpanel')) return;
+  if (!j.pending.length) { box.innerHTML = `<div class="card revnone"><b>Website reviews:</b> nothing waiting for approval. ${j.approved} approved so far.</div>`; return; }
+  const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+  box.innerHTML = `<section class="card revbox" role="region" aria-label="Reviews waiting for approval">
+    <div class="phead"><h2>${j.pending.length} new review${j.pending.length === 1 ? '' : 's'} waiting for your approval</h2></div>
+    <div class="help" style="margin-bottom:10px">Nothing shows on the website until you approve it.</div>
+    ${j.pending.map((r) => `<div class="revrow" data-id="${esc(r.id)}">
+      <div><b>${esc(r.name)}</b> <span class="stars" aria-label="${r.rating} out of 5">${stars(r.rating)}</span> <small>${esc(r.about)} · ${esc(fmtDT(r.ts))}</small>
+      <p>${esc(r.text)}</p></div>
+      <div class="revbtns"><button class="btn small" type="button" data-act="Approved">Approve</button><button class="btn small ghost" type="button" data-act="Rejected">Reject</button></div>
+      <div class="errbox" hidden></div></div>`).join('')}
+  </section>`;
+  box.querySelectorAll('.revrow').forEach((row) => row.querySelectorAll('button').forEach((b) => b.addEventListener('click', async () => {
+    row.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+    try { await api('setReview', { clientId: uid(), id: row.dataset.id, status: b.dataset.act }); loadReviewPanel(); }
+    catch (e) { if (handleApiError(e)) return; const eb = row.querySelector('.errbox'); eb.hidden = false; eb.textContent = e.message; row.querySelectorAll('button').forEach((x) => { x.disabled = false; }); }
+  })));
 }
